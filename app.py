@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 from typing import Optional
@@ -119,27 +118,7 @@ def init_state():
     if "last_commentary" not in st.session_state:
         st.session_state.last_commentary = ""
 
-    # scroll flag
-    if "_do_scroll" not in st.session_state:
-        st.session_state._do_scroll = False
-
 init_state()
-
-# =============================
-# Scroll-to-top (en üstte çalışır)
-# =============================
-if st.session_state.get("_do_scroll", False):
-    components.html(
-        """
-        <script>
-          try { window.parent.scrollTo({top: 0, left: 0, behavior: 'instant'}); }
-          catch (e) { window.parent.scrollTo(0,0); }
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
-    st.session_state._do_scroll = False
 
 # =============================
 # Piyasa/Risk Profili (terminoloji sadeleştirildi)
@@ -181,15 +160,13 @@ SCENARIOS = {
 }
 
 # =============================
-# Navigation (scroll flag eklendi)
+# Navigation
 # =============================
 def go_next():
     st.session_state.step = 1 if st.session_state.step == 0 else min(5, st.session_state.step + 1)
-    st.session_state._do_scroll = True
 
 def go_prev():
     st.session_state.step = 0 if st.session_state.step == 1 else max(0, st.session_state.step - 1)
-    st.session_state._do_scroll = True
 
 def hard_reset():
     st.session_state.step = 0
@@ -199,7 +176,6 @@ def hard_reset():
     st.session_state.last_commentary = ""
     st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
     st.session_state.quiz_submitted = {"intro": False, 1: False, 2: False, 3: False, 4: False}
-    st.session_state._do_scroll = True
 
 # =============================
 # Üst hesaplar
@@ -286,7 +262,7 @@ if st.session_state.step in [1, 2, 3, 4, 5]:
     st.progress(st.session_state.step / 5)
 
 # =============================
-# 1) Profil
+# 1) Profil (metin sadeleştirildi)
 # =============================
 if st.session_state.step == 1:
     st.markdown(
@@ -580,7 +556,6 @@ elif st.session_state.step == 5:
 
     if b2.button("📣 Bu primle piyasaya çık (1 dönem simüle et)", use_container_width=True):
         simulate_one_pricing_period()
-        st.session_state._do_scroll = True  # simülasyon sonrası da yukarı al
         st.rerun()
 
 # =============================
