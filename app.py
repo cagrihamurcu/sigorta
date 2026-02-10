@@ -76,14 +76,13 @@ def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choi
         diagnosis.append("Talep güçlü (poliçe yüksek). Havuz büyüdükçe sonuçlar beklenene yaklaşma eğilimindedir (risk havuzu etkisi).")
         actions.append("CR iyi ise büyümeyi sürdür; CR kötü ise prim yetersizliğini büyütebilir (prim artır).")
 
-    # Yol haritası (strateji şablonu)
+    # Yol haritası
     roadmap.append("1) Önce denge: Combined Ratio’yu 1’in altına çek (kârlılık).")
     roadmap.append("2) Sonra büyüme: CR<1 ise primde küçük indirimlerle talebi test et (kontrollü).")
     roadmap.append("3) Piyasa hassassa: küçük prim artışı talebi hızlı düşürür; prim ayarını küçük adımlarla yap.")
     roadmap.append("4) Riskli senaryoyu en sona bırak: önce ‘Normal’ ile mantığı oturt, sonra ‘Daha Riskli’ ile şoku gör.")
 
     return diagnosis, actions, roadmap
-
 
 # =============================
 # State
@@ -149,6 +148,32 @@ SCENARIOS = {
     },
 }
 
+# =============================
+# Navigation (on_click yok)
+# =============================
+def go_next():
+    if st.session_state.step == 0:
+        st.session_state.step = 1
+    else:
+        st.session_state.step = min(5, st.session_state.step + 1)
+
+def go_prev():
+    if st.session_state.step == 1:
+        st.session_state.step = 0
+    else:
+        st.session_state.step = max(0, st.session_state.step - 1)
+
+def hard_reset():
+    st.session_state.step = 0
+    st.session_state.t = 0
+    st.session_state.capital = st.session_state.capital0
+    st.session_state.history = []
+    st.session_state.last_commentary = ""
+    st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
+
+# =============================
+# Üst hesaplar
+# =============================
 p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
 mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
 expected_loss_per_policy = p_claim * mean_loss
@@ -168,33 +193,13 @@ colC.metric("Önerilen brüt prim", fmt_tl(suggested_gross))
 colD.metric("Senin primin", fmt_tl(premium_choice))
 
 # =============================
-# Sidebar: reset
+# Sidebar
 # =============================
 with st.sidebar:
     st.header("⚙️ Oyun")
     if st.button("🔄 Baştan Başlat", use_container_width=True):
-        st.session_state.step = 0
-        st.session_state.t = 0
-        st.session_state.capital = st.session_state.capital0
-        st.session_state.history = []
-        st.session_state.last_commentary = ""
-        st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
+        hard_reset()
         st.rerun()
-
-# =============================
-# Navigation
-# =============================
-def go_next():
-    if st.session_state.step == 0:
-        st.session_state.step = 1
-    else:
-        st.session_state.step = min(5, st.session_state.step + 1)
-
-def go_prev():
-    if st.session_state.step == 1:
-        st.session_state.step = 0
-    else:
-        st.session_state.step = max(0, st.session_state.step - 1)
 
 # =============================
 # INTRO
@@ -226,13 +231,15 @@ if st.session_state.step == 0:
     else:
         st.warning("İpucu: p hasar olasılığıdır.")
 
-    st.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
+    if st.button("İleri ➜", disabled=not ok, use_container_width=True):
+        go_next()
+        st.rerun()
 
 # =============================
 # Wizard başlıkları
 # =============================
-steps_title = {1:"1) Risk Senaryosu", 2:"2) Prim Bileşenleri", 3:"3) Prim Kararı", 4:"4) Piyasa (Talep)", 5:"5) Özet & Oynat"}
-if st.session_state.step in [1,2,3,4,5]:
+steps_title = {1: "1) Risk Senaryosu", 2: "2) Prim Bileşenleri", 3: "3) Prim Kararı", 4: "4) Piyasa (Talep)", 5: "5) Özet & Oynat"}
+if st.session_state.step in [1, 2, 3, 4, 5]:
     st.subheader(f"🧭 {steps_title[st.session_state.step]}")
     st.progress(st.session_state.step / 5)
 
@@ -266,9 +273,12 @@ if st.session_state.step == 1:
     )
     st.session_state.scenario = scenario
 
+    # güncelle
     p_claim = SCENARIOS[scenario]["p_claim"]
     mean_loss = SCENARIOS[scenario]["mean_loss"]
     expected_loss_per_policy = p_claim * mean_loss
+    suggested_gross = expected_loss_per_policy * (1 + st.session_state.expense_loading + st.session_state.profit_loading)
+    premium_choice = suggested_gross * (st.session_state.premium_factor / 100.0)
 
     st.success(f"**Risk tipi:** {SCENARIOS[scenario]['label']}")
     st.caption(f"Ne zaman seçilir? {SCENARIOS[scenario]['when']}")
@@ -285,8 +295,12 @@ if st.session_state.step == 1:
         st.warning("İpucu: Teknik prim beklenen hasardır.")
 
     c1, c2 = st.columns(2)
-    c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
-    c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
+    if c1.button("⬅ Geri", use_container_width=True):
+        go_prev()
+        st.rerun()
+    if c2.button("İleri ➜", disabled=not ok, use_container_width=True):
+        go_next()
+        st.rerun()
 
 # =============================
 # 2) Prim bileşenleri
@@ -310,10 +324,12 @@ Hasarlar her tur beklenenin üstüne çıkabilir. Bu pay “tampon” sağlar.
     st.session_state.expense_loading = st.slider("Gider yüklemesi (%)", 0, 50, int(st.session_state.expense_loading * 100), 1) / 100
     st.session_state.profit_loading = st.slider("Belirsizlik tamponu / güvenlik–kâr (%)", 0, 50, int(st.session_state.profit_loading * 100), 1) / 100
 
+    # güncelle
     p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
     mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
     expected_loss_per_policy = p_claim * mean_loss
     suggested_gross = expected_loss_per_policy * (1 + st.session_state.expense_loading + st.session_state.profit_loading)
+    premium_choice = suggested_gross * (st.session_state.premium_factor / 100.0)
 
     st.success(
         f"Teknik prim: **{fmt_tl(expected_loss_per_policy)}**\n\n"
@@ -332,8 +348,12 @@ Hasarlar her tur beklenenin üstüne çıkabilir. Bu pay “tampon” sağlar.
         st.warning("İpucu: Brüt prim = teknik prim + yüklemeler.")
 
     c1, c2 = st.columns(2)
-    c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
-    c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
+    if c1.button("⬅ Geri", use_container_width=True):
+        go_prev()
+        st.rerun()
+    if c2.button("İleri ➜", disabled=not ok, use_container_width=True):
+        go_next()
+        st.rerun()
 
 # =============================
 # 3) Prim kararı
@@ -351,6 +371,7 @@ elif st.session_state.step == 3:
 
     st.session_state.premium_factor = st.slider("Prim düzeyi (önerilen brüt primin %’si)", 60, 160, int(st.session_state.premium_factor), 5)
 
+    # güncelle
     p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
     mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
     expected_loss_per_policy = p_claim * mean_loss
@@ -380,8 +401,12 @@ elif st.session_state.step == 3:
         st.warning("İpucu: fiyat ↓ → talep ↑, ama prim yetersiz kalabilir.")
 
     c1, c2 = st.columns(2)
-    c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
-    c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
+    if c1.button("⬅ Geri", use_container_width=True):
+        go_prev()
+        st.rerun()
+    if c2.button("İleri ➜", disabled=not ok, use_container_width=True):
+        go_next()
+        st.rerun()
 
 # =============================
 # 4) Piyasa
@@ -423,8 +448,12 @@ Talep iki şeye bağlı:
         st.warning("İpucu: duyarlılık ↑ → fiyat artışına tepki ↑")
 
     c1, c2 = st.columns(2)
-    c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
-    c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
+    if c1.button("⬅ Geri", use_container_width=True):
+        go_prev()
+        st.rerun()
+    if c2.button("İleri ➜", disabled=not ok, use_container_width=True):
+        go_next()
+        st.rerun()
 
 # =============================
 # 5) Özet & Oynat
@@ -447,6 +476,10 @@ elif st.session_state.step == 5:
         "Duyarlılık": st.session_state.sensitivity,
     }
     st.dataframe(pd.DataFrame([summary]), use_container_width=True)
+
+    if st.button("⬅ Geri", use_container_width=True):
+        go_prev()
+        st.rerun()
 
     def play_one_period():
         n_policies = demand_from_premium(
@@ -494,9 +527,9 @@ elif st.session_state.step == 5:
             "Sermaye": st.session_state.capital
         })
 
-    c1, c2 = st.columns(2)
-    c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
-    c2.button("▶️ 1 dönem oynat", on_click=play_one_period, use_container_width=True)
+    if st.button("▶️ 1 dönem oynat", use_container_width=True):
+        play_one_period()
+        st.rerun()
 
 # =============================
 # Sonuçlar + Koç
