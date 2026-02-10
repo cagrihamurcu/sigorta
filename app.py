@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from typing import Optional
+import time
 
 st.set_page_config(page_title="Sigorta Temel Mantık Simülasyonu (Eğitici + Koç)", layout="wide")
 
@@ -121,6 +122,27 @@ def init_state():
 init_state()
 
 # =============================
+# URL (query param) ile adımı senkronla (scroll reset için)
+# =============================
+try:
+    qp = st.query_params  # yeni Streamlit
+    if "step" in qp:
+        st.session_state.step = int(qp["step"])
+except Exception:
+    q = st.experimental_get_query_params()
+    if "step" in q:
+        st.session_state.step = int(q["step"][0])
+
+def _set_step_in_url(step: int):
+    # URL değişsin diye küçük bir "t" paramı da ekliyoruz (cache etkisini kırar)
+    t = str(int(time.time() * 1000))
+    try:
+        st.query_params["step"] = str(step)
+        st.query_params["t"] = t
+    except Exception:
+        st.experimental_set_query_params(step=str(step), t=t)
+
+# =============================
 # Piyasa/Risk Profili (terminoloji sadeleştirildi)
 # =============================
 SCENARIOS = {
@@ -160,13 +182,15 @@ SCENARIOS = {
 }
 
 # =============================
-# Navigation
+# Navigation (URL sync + scroll reset)
 # =============================
 def go_next():
     st.session_state.step = 1 if st.session_state.step == 0 else min(5, st.session_state.step + 1)
+    _set_step_in_url(st.session_state.step)
 
 def go_prev():
     st.session_state.step = 0 if st.session_state.step == 1 else max(0, st.session_state.step - 1)
+    _set_step_in_url(st.session_state.step)
 
 def hard_reset():
     st.session_state.step = 0
@@ -176,6 +200,7 @@ def hard_reset():
     st.session_state.last_commentary = ""
     st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
     st.session_state.quiz_submitted = {"intro": False, 1: False, 2: False, 3: False, 4: False}
+    _set_step_in_url(0)
 
 # =============================
 # Üst hesaplar
@@ -262,7 +287,7 @@ if st.session_state.step in [1, 2, 3, 4, 5]:
     st.progress(st.session_state.step / 5)
 
 # =============================
-# 1) Profil (metin sadeleştirildi)
+# 1) Profil
 # =============================
 if st.session_state.step == 1:
     st.markdown(
