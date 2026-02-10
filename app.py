@@ -3,11 +3,14 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
-st.set_page_config(page_title="Sigorta Temel Simülasyon Oyunu", layout="wide")
+st.set_page_config(page_title="Sigorta Temel Mantık Oyunu (Adım Adım)", layout="wide")
 
 # -----------------------------
-# Oyun mantığı (çok basit)
+# Yardımcılar
 # -----------------------------
+def fmt_tl(x: float) -> str:
+    return f"{x:,.0f} TL"
+
 def simulate_period(n_policies: int, p_claim: float, mean_loss: float, seed: Optional[int] = None):
     rng = np.random.default_rng(seed)
     claim_occurs = rng.random(n_policies) < p_claim
@@ -20,247 +23,373 @@ def demand_from_premium(premium: float, base_policies: int, reference_premium: f
     demand_factor = np.exp(-sensitivity * (ratio - 1.0))
     return max(0, int(round(base_policies * demand_factor)))
 
-def fmt_tl(x: float) -> str:
-    return f"{x:,.0f} TL"
+def init_state():
+    if "step" not in st.session_state:
+        st.session_state.step = 1
+
+    if "capital0" not in st.session_state:
+        st.session_state.capital0 = 1_000_000.0
+        st.session_state.capital = st.session_state.capital0
+
+    if "t" not in st.session_state:
+        st.session_state.t = 0
+
+    if "history" not in st.session_state:
+        st.session_state.history = []
+
+    # Oyuncu seçimleri (wizard boyunca doldurulacak)
+    if "scenario" not in st.session_state:
+        st.session_state.scenario = "Normal"
+
+    if "expense_loading" not in st.session_state:
+        st.session_state.expense_loading = 0.20
+
+    if "profit_loading" not in st.session_state:
+        st.session_state.profit_loading = 0.10
+
+    if "premium_factor" not in st.session_state:
+        st.session_state.premium_factor = 100
+
+    if "base_policies" not in st.session_state:
+        st.session_state.base_policies = 2000
+
+    if "sensitivity" not in st.session_state:
+        st.session_state.sensitivity = 1.2
+
+    if "seed" not in st.session_state:
+        st.session_state.seed = 0
+
+    if "last_commentary" not in st.session_state:
+        st.session_state.last_commentary = ""
+
+init_state()
 
 # -----------------------------
-# State
+# Senaryo parametreleri
 # -----------------------------
-if "initialized" not in st.session_state:
-    st.session_state.initialized = False
+SCENARIOS = {
+    "Daha Az Riskli": {"p_claim": 0.05, "mean_loss": 20_000},
+    "Normal": {"p_claim": 0.08, "mean_loss": 25_000},
+    "Daha Riskli": {"p_claim": 0.12, "mean_loss": 32_000},
+}
 
-if "t" not in st.session_state:
-    st.session_state.t = 0
-    st.session_state.capital0 = 1_000_000.0
-    st.session_state.capital = st.session_state.capital0
-    st.session_state.history = []
+p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
+mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
 
-if "last_commentary" not in st.session_state:
-    st.session_state.last_commentary = ""
-
-# -----------------------------
-# Başlık + Oyun açıklaması (oyuncu yönlendirmesi)
-# -----------------------------
-st.title("🎮 Sigortacılık Mantığı Oyunu: Prim–Hasar–Sermaye")
-st.caption("Amaç: 12 dönem boyunca şirketi batırmadan sermayeyi büyütmek. Her dönem prim belirle, müşteri (poliçe) sayısı oluşsun, hasarlar gelsin, sonucu gör.")
-
-with st.expander("📌 Nasıl oynanır? (30 saniye)", expanded=True):
-    st.markdown(
-        """
-**1) Soldan prim kararını ver:**  
-- “Önerilen brüt prim” sana referans.  
-- Daha düşük prim → daha çok müşteri ama zarar riski.  
-- Daha yüksek prim → daha az müşteri ama kârlılık ihtimali.
-
-**2) “▶️ 1 Dönem Oynat” butonuna bas.**  
-Her basış 1 dönem ilerletir.
-
-**3) Sonuçları oku:**  
-- **Combined Ratio < 1** ise teknik kâr, **> 1** ise teknik zarar.  
-- Sermaye düşerse batarsın (ders: fiyatlama + havuz mantığı).
-        """
-    )
+expected_loss_per_policy = p_claim * mean_loss
+suggested_gross = expected_loss_per_policy * (1 + st.session_state.expense_loading + st.session_state.profit_loading)
+premium_choice = suggested_gross * (st.session_state.premium_factor / 100.0)
 
 # -----------------------------
-# Sol panel: Oyun kontrol paneli (minimum, anlaşılır)
+# Oyun başlığı + ilerleme
 # -----------------------------
-with st.sidebar:
-    st.header("🎛 Oyun Kontrol Paneli")
+st.title("🎮 Sigortacılığın Temel Mantığı (Adım Adım)")
+st.caption("Öğrenciye tek seferde her şeyi yüklemek yerine 5 adımda ilerliyoruz: Risk → Yüklemeler → Prim → Piyasa → Oynat.")
 
-    # Basit risk parametreleri
-    st.subheader("1) Risk (Senaryo)")
-    scenario = st.selectbox(
-        "Senaryo seç",
-        ["Normal", "Daha Riskli", "Daha Az Riskli"],
-        index=0
-    )
+progress = (st.session_state.step - 1) / 5
+st.progress(progress)
 
-    if scenario == "Normal":
-        p_claim = 0.08
-        mean_loss = 25_000
-    elif scenario == "Daha Riskli":
-        p_claim = 0.12
-        mean_loss = 32_000
-    else:
-        p_claim = 0.05
-        mean_loss = 20_000
+steps_title = {
+    1: "1) Risk Senaryosu",
+    2: "2) Yüklemeler (Gider + Güvenlik/Kâr)",
+    3: "3) Prim Kararı",
+    4: "4) Piyasa (Talep)",
+    5: "5) Özet & Oynat",
+}
+st.subheader(f"🧭 {steps_title.get(st.session_state.step, '')}")
 
-    st.write(f"Hasar olasılığı (p): **{p_claim:.2f}**")
-    st.write(f"Ortalama hasar: **{fmt_tl(mean_loss)}**")
-
-    st.subheader("2) Yüklemeler")
-    expense_loading = st.slider("Gider yüklemesi (%)", 0, 50, 20, 1) / 100
-    profit_loading = st.slider("Güvenlik/Kâr payı (%)", 0, 50, 10, 1) / 100
-
-    expected_loss_per_policy = p_claim * mean_loss
-    suggested_gross = expected_loss_per_policy * (1 + expense_loading + profit_loading)
-
-    st.divider()
-    st.subheader("3) Prim Kararın")
-    st.info(f"Önerilen brüt prim: **{fmt_tl(suggested_gross)} / poliçe**")
-
-    # Oyuncuya kolaylık: prim “önerilenin % kaçı?”
-    premium_factor = st.slider("Prim düzeyi (önerilenin %’si)", 60, 160, 100, 5)
-    premium_choice = float(suggested_gross) * (premium_factor / 100)
-
-    st.write("Senin primin:", f"**{fmt_tl(premium_choice)} / poliçe**")
-
-    st.divider()
-    st.subheader("4) Piyasa (Talep)")
-    base_policies = st.slider("Piyasa büyüklüğü (referans poliçe)", 200, 10000, 2000, 100)
-    sensitivity = st.slider("Fiyata duyarlılık", 0.0, 3.0, 1.2, 0.1)
-
-    st.divider()
-    st.subheader("5) Oynat / Sıfırla")
-    seed = st.number_input("Rastgelelik (seed) (opsiyonel)", min_value=0, value=0, step=1)
-
-    play_one = st.button("▶️ 1 Dönem Oynat", use_container_width=True)
-    auto_demo = st.checkbox("Açılışta 1 örnek tur otomatik oynat", value=True)
-
-    reset = st.button("🔄 Oyunu Sıfırla", use_container_width=True)
-
-# Reset
-if reset:
-    st.session_state.t = 0
-    st.session_state.capital = st.session_state.capital0
-    st.session_state.history = []
-    st.session_state.last_commentary = ""
-    st.session_state.initialized = False
-    st.rerun()
-
-# -----------------------------
-# Oynatma fonksiyonu (tek yerden)
-# -----------------------------
-def run_one_period(premium_choice: float, p_claim: float, mean_loss: float,
-                   expense_loading: float, base_policies: int, sensitivity: float,
-                   suggested_gross: float, seed: int):
-
-    st.session_state.t += 1
-
-    n_policies = demand_from_premium(
-        premium=premium_choice,
-        base_policies=base_policies,
-        reference_premium=suggested_gross if suggested_gross > 0 else 1.0,
-        sensitivity=sensitivity
-    )
-
-    n_claims, total_loss = simulate_period(
-        n_policies=n_policies,
-        p_claim=p_claim,
-        mean_loss=mean_loss,
-        seed=(seed + st.session_state.t) if seed != 0 else None
-    )
-
-    premium_income = float(n_policies) * float(premium_choice)
-    expense = premium_income * expense_loading
-    uw_result = premium_income - total_loss - expense
-
-    st.session_state.capital += uw_result
-
-    loss_ratio = (total_loss / premium_income) if premium_income > 0 else 0.0
-    expense_ratio = (expense / premium_income) if premium_income > 0 else 0.0
-    combined_ratio = loss_ratio + expense_ratio
-
-    # Kısa yorum (oyuncu neyi anlasın?)
-    if premium_income == 0:
-        comment = "Prim çok yüksek olduğu için talep sıfıra yakınladı. Poliçe yoksa hasar da yok, ama oyun ilerlemiyor."
-    else:
-        if combined_ratio < 1.0:
-            comment = "Bu tur teknik kâr ettin (Combined Ratio < 1). Prim seviyesi ve risk gerçekleşmesi bu tur lehine oldu."
-        else:
-            comment = "Bu tur teknik zarar ettin (Combined Ratio > 1). Ya prim düşük kaldı ya da hasar gerçekleşmesi yüksek geldi."
-
-    # Öğretici bir cümle daha:
-    if premium_choice < suggested_gross * 0.9:
-        comment += " Prim, önerilen seviyenin epey altında: müşteri artar ama sermaye erime riski yükselir."
-    elif premium_choice > suggested_gross * 1.1:
-        comment += " Prim, önerilen seviyenin üstünde: zarar riski azalır ama müşteri kaybı yaşayabilirsin."
-    else:
-        comment += " Prim, önerilen seviyeye yakın: beklenen dengeyi hedefliyorsun."
-
-    st.session_state.last_commentary = comment
-
-    st.session_state.history.append({
-        "Dönem": st.session_state.t,
-        "Poliçe": n_policies,
-        "Hasar Adedi": n_claims,
-        "Prim (poliçe)": premium_choice,
-        "Prim Geliri": premium_income,
-        "Toplam Hasar": total_loss,
-        "Gider": expense,
-        "UW Sonucu": uw_result,
-        "Combined Ratio": combined_ratio,
-        "Sermaye": st.session_state.capital
-    })
-
-# -----------------------------
-# Açılışta otomatik 1 tur (oyuncu “kendini oynatıyor” hissi)
-# -----------------------------
-if (not st.session_state.initialized) and auto_demo:
-    st.session_state.initialized = True
-    # Açılış turu: önerilen primin %100'ü ile oynat
-    run_one_period(
-        premium_choice=premium_choice,
-        p_claim=p_claim,
-        mean_loss=mean_loss,
-        expense_loading=expense_loading,
-        base_policies=base_policies,
-        sensitivity=sensitivity,
-        suggested_gross=suggested_gross,
-        seed=int(seed)
-    )
-
-# Butonla oynatma
-if play_one:
-    run_one_period(
-        premium_choice=premium_choice,
-        p_claim=p_claim,
-        mean_loss=mean_loss,
-        expense_loading=expense_loading,
-        base_policies=base_policies,
-        sensitivity=sensitivity,
-        suggested_gross=suggested_gross,
-        seed=int(seed)
-    )
-
-# -----------------------------
-# Ana ekran: skorlar ve “ne yapacağını söyle”
-# -----------------------------
+# Üstte küçük skor panosu (oyun hissi)
 colA, colB, colC, colD = st.columns(4)
 colA.metric("Dönem", f"{st.session_state.t} / 12")
 colB.metric("Sermaye", fmt_tl(st.session_state.capital))
-colC.metric("Hedef", "Sermayeyi artır")
-if st.session_state.t >= 1:
-    last_cr = st.session_state.history[-1]["Combined Ratio"]
-    colD.metric("Son Combined Ratio", f"{last_cr:.2f}")
-else:
-    colD.metric("Son Combined Ratio", "-")
+colC.metric("Önerilen brüt prim", fmt_tl(suggested_gross))
+colD.metric("Senin primin", fmt_tl(premium_choice))
+
+# -----------------------------
+# Navigasyon butonları
+# -----------------------------
+def go_prev():
+    st.session_state.step = max(1, st.session_state.step - 1)
+
+def go_next():
+    st.session_state.step = min(5, st.session_state.step + 1)
+
+# -----------------------------
+# 1) Risk Senaryosu
+# -----------------------------
+if st.session_state.step == 1:
+    st.markdown(
+        """
+Bu adımda sadece **riskin yapısını** seçiyorsun.
+
+- **Hasar olasılığı (p):** Bir poliçede dönem içinde hasar olma ihtimali  
+- **Ortalama hasar:** Hasar olursa ortalama tutar
+
+Amaç: Risk artınca primin neden artması gerektiğini görmek.
+        """
+    )
+
+    scenario = st.radio(
+        "Senaryo seç",
+        list(SCENARIOS.keys()),
+        index=list(SCENARIOS.keys()).index(st.session_state.scenario),
+        horizontal=True
+    )
+    st.session_state.scenario = scenario
+
+    p_claim = SCENARIOS[scenario]["p_claim"]
+    mean_loss = SCENARIOS[scenario]["mean_loss"]
+
+    st.info(f"Bu senaryoda: p = **{p_claim:.2f}**, ortalama hasar = **{fmt_tl(mean_loss)}**")
+
+    nav1, nav2 = st.columns([1, 1])
+    with nav2:
+        st.button("İleri ➜", on_click=go_next, use_container_width=True)
+
+# -----------------------------
+# 2) Yüklemeler
+# -----------------------------
+elif st.session_state.step == 2:
+    st.markdown(
+        """
+Sigortada prim sadece hasarı ödemek için değildir.
+
+**Teknik prim (beklenen hasar)**:
+- Beklenen hasar / poliçe = **p × ortalama hasar**
+
+**Brüt prim**:
+- Teknik prim + **gider yüklemesi** + **güvenlik/kâr payı**
+        """
+    )
+
+    st.session_state.expense_loading = st.slider(
+        "Gider yüklemesi (%) (komisyon, personel, IT, genel gider vb.)",
+        0, 50, int(st.session_state.expense_loading * 100), 1
+    ) / 100
+
+    st.session_state.profit_loading = st.slider(
+        "Güvenlik/Kâr payı (%) (belirsizlik için tampon + kâr)",
+        0, 50, int(st.session_state.profit_loading * 100), 1
+    ) / 100
+
+    # Güncel hesapları göster
+    p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
+    mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
+    expected_loss_per_policy = p_claim * mean_loss
+    suggested_gross = expected_loss_per_policy * (1 + st.session_state.expense_loading + st.session_state.profit_loading)
+
+    st.success(
+        f"Beklenen hasar / poliçe (teknik prim): **{fmt_tl(expected_loss_per_policy)}**  \n"
+        f"Önerilen brüt prim / poliçe: **{fmt_tl(suggested_gross)}**"
+    )
+
+    nav1, nav2 = st.columns([1, 1])
+    with nav1:
+        st.button("⬅ Geri", on_click=go_prev, use_container_width=True)
+    with nav2:
+        st.button("İleri ➜", on_click=go_next, use_container_width=True)
+
+# -----------------------------
+# 3) Prim Kararı
+# -----------------------------
+elif st.session_state.step == 3:
+    st.markdown(
+        """
+Şimdi “satış fiyatını” seçiyorsun.
+
+- **Önerilen brüt prim** denge noktası gibi düşün.
+- Daha düşük fiyat → daha çok müşteri, ama **zarar riski** artabilir.
+- Daha yüksek fiyat → müşteri azalabilir, ama **kârlılık** ihtimali artar.
+        """
+    )
+
+    st.session_state.premium_factor = st.slider(
+        "Prim düzeyi (önerilen brüt primin %’si)",
+        60, 160, int(st.session_state.premium_factor), 5
+    )
+
+    # Güncel premium hesap
+    p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
+    mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
+    expected_loss_per_policy = p_claim * mean_loss
+    suggested_gross = expected_loss_per_policy * (1 + st.session_state.expense_loading + st.session_state.profit_loading)
+    premium_choice = suggested_gross * (st.session_state.premium_factor / 100.0)
+
+    if st.session_state.premium_factor < 90:
+        st.warning(f"Prim düşük: **{fmt_tl(premium_choice)}** → müşteri artabilir ama sermaye eriyebilir.")
+    elif st.session_state.premium_factor > 110:
+        st.info(f"Prim yüksek: **{fmt_tl(premium_choice)}** → zarar riski azalabilir ama müşteri kaybı olabilir.")
+    else:
+        st.success(f"Dengeli prim: **{fmt_tl(premium_choice)}**")
+
+    nav1, nav2 = st.columns([1, 1])
+    with nav1:
+        st.button("⬅ Geri", on_click=go_prev, use_container_width=True)
+    with nav2:
+        st.button("İleri ➜", on_click=go_next, use_container_width=True)
+
+# -----------------------------
+# 4) Piyasa (Talep)
+# -----------------------------
+elif st.session_state.step == 4:
+    st.markdown(
+        """
+Sigorta sadece matematik değildir; **piyasa davranışı** da vardır.
+
+- Pazar büyüklüğü (referans poliçe): Prim “makul” ise yaklaşık bu kadar müşteri gelir.
+- Fiyata duyarlılık: Prim artınca müşterinin kaçma derecesi.
+        """
+    )
+
+    st.session_state.base_policies = st.slider(
+        "Pazar büyüklüğü (referans poliçe)",
+        200, 10000, int(st.session_state.base_policies), 100
+    )
+
+    st.session_state.sensitivity = st.slider(
+        "Fiyata duyarlılık (0=duyarsız, 3=çok hassas)",
+        0.0, 3.0, float(st.session_state.sensitivity), 0.1
+    )
+
+    # Tahmini talep göster
+    n_est = demand_from_premium(
+        premium=premium_choice,
+        base_policies=st.session_state.base_policies,
+        reference_premium=suggested_gross if suggested_gross > 0 else 1.0,
+        sensitivity=st.session_state.sensitivity
+    )
+
+    st.info(f"Bu fiyatta tahmini müşteri (poliçe) sayısı: **{n_est:,}**")
+
+    nav1, nav2 = st.columns([1, 1])
+    with nav1:
+        st.button("⬅ Geri", on_click=go_prev, use_container_width=True)
+    with nav2:
+        st.button("İleri ➜", on_click=go_next, use_container_width=True)
+
+# -----------------------------
+# 5) Özet & Oynat
+# -----------------------------
+elif st.session_state.step == 5:
+    st.markdown(
+        """
+Son adım: Seçimlerini özetle ve **1 dönem oynat**.
+
+Bu turda:
+- Talep (poliçe sayısı) oluşur
+- Hasarlar gelir
+- Gider düşülür
+- **Sermaye** güncellenir
+        """
+    )
+
+    st.session_state.seed = int(st.number_input("Rastgelelik (seed) (opsiyonel)", min_value=0, value=int(st.session_state.seed), step=1))
+
+    # Özet kartı
+    summary = {
+        "Senaryo": st.session_state.scenario,
+        "Hasar olasılığı (p)": p_claim,
+        "Ortalama hasar": fmt_tl(mean_loss),
+        "Beklenen hasar / poliçe": fmt_tl(expected_loss_per_policy),
+        "Gider yüklemesi": f"{int(st.session_state.expense_loading*100)}%",
+        "Güvenlik/Kâr payı": f"{int(st.session_state.profit_loading*100)}%",
+        "Önerilen brüt prim": fmt_tl(suggested_gross),
+        "Senin primin": fmt_tl(premium_choice),
+        "Pazar büyüklüğü": f"{st.session_state.base_policies:,}",
+        "Fiyata duyarlılık": st.session_state.sensitivity,
+    }
+    st.dataframe(pd.DataFrame([summary]), use_container_width=True)
+
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        st.button("⬅ Geri", on_click=go_prev, use_container_width=True)
+
+    def play_one_period():
+        # Talep
+        n_policies = demand_from_premium(
+            premium=premium_choice,
+            base_policies=st.session_state.base_policies,
+            reference_premium=suggested_gross if suggested_gross > 0 else 1.0,
+            sensitivity=st.session_state.sensitivity
+        )
+
+        # Hasar
+        st.session_state.t += 1
+        n_claims, total_loss = simulate_period(
+            n_policies=n_policies,
+            p_claim=p_claim,
+            mean_loss=mean_loss,
+            seed=(st.session_state.seed + st.session_state.t) if st.session_state.seed != 0 else None
+        )
+
+        premium_income = float(n_policies) * float(premium_choice)
+        expense = premium_income * st.session_state.expense_loading
+        uw_result = premium_income - total_loss - expense
+
+        st.session_state.capital += uw_result
+
+        combined_ratio = (total_loss + expense) / premium_income if premium_income > 0 else 0.0
+
+        # Öğretici yorum
+        if premium_income == 0:
+            comment = "Prim çok yüksek olduğu için talep neredeyse sıfırlandı. Poliçe olmayınca hasar da yok; ama oyun öğrenme açısından kilitlenir."
+        elif combined_ratio < 1.0:
+            comment = "✅ Teknik kâr (Combined Ratio < 1). Bu tur prim ve gerçekleşen hasar dengesi lehine oldu."
+        else:
+            comment = "⚠️ Teknik zarar (Combined Ratio > 1). Ya prim düşük kaldı ya da hasar gerçekleşmesi yüksek geldi."
+
+        st.session_state.last_commentary = comment
+
+        st.session_state.history.append({
+            "Dönem": st.session_state.t,
+            "Poliçe": n_policies,
+            "Hasar Adedi": n_claims,
+            "Prim (poliçe)": premium_choice,
+            "Prim Geliri": premium_income,
+            "Toplam Hasar": total_loss,
+            "Gider": expense,
+            "UW Sonucu": uw_result,
+            "Combined Ratio": combined_ratio,
+            "Sermaye": st.session_state.capital
+        })
+
+    with col2:
+        st.button("▶️ 1 Dönem Oynat", on_click=play_one_period, use_container_width=True)
+
+    with col3:
+        if st.button("🔄 Oyunu Sıfırla", use_container_width=True):
+            st.session_state.t = 0
+            st.session_state.capital = st.session_state.capital0
+            st.session_state.history = []
+            st.session_state.last_commentary = ""
+            st.session_state.step = 1
+            st.rerun()
+
+# -----------------------------
+# Alt bölüm: Sonuçlar (her adımda görünür)
+# -----------------------------
+st.divider()
 
 if st.session_state.last_commentary:
     st.success(st.session_state.last_commentary)
 
-# Oyuncuya “şimdi ne yapayım?” mesajı
-if st.session_state.t == 0:
-    st.warning("Başlamak için soldan prim düzeyini seç ve **▶️ 1 Dönem Oynat** butonuna bas.")
-elif st.session_state.t < 12:
-    st.info("Bir sonraki tur için prim düzeyini değiştirip tekrar **▶️ 1 Dönem Oynat** yap. Amaç: Combined Ratio’yu 1’in altında tutarak sermayeyi büyütmek.")
-else:
-    if st.session_state.capital > st.session_state.capital0:
-        st.balloons()
-        st.success("🎉 Oyun bitti: Sermayeyi büyüttün! (Temel ders: doğru prim + havuz etkisi)")
-    else:
-        st.error("Oyun bitti: Sermaye düştü. (Temel ders: düşük prim / kötü şans birleşince şirket zarar eder)")
-
-# -----------------------------
-# Sonuç tablosu + grafikler
-# -----------------------------
 if st.session_state.history:
     df = pd.DataFrame(st.session_state.history)
 
-    st.subheader("📊 Dönem Sonuçları")
+    st.subheader("📊 Oyun Sonuçları (Dönem Dönem)")
     st.dataframe(df, use_container_width=True)
 
     st.subheader("📈 Trendler")
     st.line_chart(df.set_index("Dönem")[["Prim Geliri", "Toplam Hasar"]])
     st.line_chart(df.set_index("Dönem")[["Combined Ratio"]])
     st.line_chart(df.set_index("Dönem")[["Sermaye"]])
+
+    if st.session_state.t >= 12:
+        if st.session_state.capital > st.session_state.capital0:
+            st.balloons()
+            st.success("🎉 12 dönem bitti: Sermayeyi büyüttün!")
+        else:
+            st.error("12 dönem bitti: Sermaye düştü. (Ders: fiyatlama + belirsizlik)")
+
+else:
+    st.info("Adım adım ilerlemek için yukarıdaki yönlendirmeleri takip et. En sonda ‘▶️ 1 Dönem Oynat’ ile sonuçları göreceksin.")
