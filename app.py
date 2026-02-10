@@ -52,7 +52,7 @@ def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choi
             actions.append("Prim düzeyini bir kademe artır (örn. +%5–%10) veya gider oranını düşürmeyi dene.")
         else:
             diagnosis.append(f"Teknik sonuç olumsuz: Combined Ratio = {cr:.2f} (>> 1).")
-            actions.append("Prim düzeyini artır (+%10–%20) ve risk kabul/fiyat disiplinini gözden geçir.")
+            actions.append("Prim düzeyini artır (+%10–%20) ve fiyat disiplinini güçlendir.")
 
     if price_gap < 0.9:
         diagnosis.append("Prim, önerilen brüt primin belirgin altında: satış artabilir ama prim yetersizliği sermayeyi zorlayabilir.")
@@ -73,7 +73,7 @@ def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choi
     roadmap.append("1) Öncelik: Combined Ratio’yu 1’in altına çek (teknik denge).")
     roadmap.append("2) Sonra: CR<1 iken küçük fiyat indirimleriyle satış hacmini test et (kontrollü).")
     roadmap.append("3) Piyasa çok hassassa: prim ayarını küçük adımlarla yap; küçük artış satışları hızlı düşürebilir.")
-    roadmap.append("4) Risk kabul seçiciliği düşük / ters seçim riski yüksek bir piyasada, primin mutlaka daha disiplinli olması gerekir.")
+    roadmap.append("4) Rekabet baskısı yüksekse, primin daha disiplinli olması gerekir.")
 
     return diagnosis, actions, roadmap
 
@@ -121,18 +121,18 @@ def init_state():
 init_state()
 
 # =============================
-# Piyasa/Risk Profili (kullanılan terimler + açıklama)
+# Piyasa/Risk Profili (terminoloji sadeleştirildi)
 # =============================
 SCENARIOS = {
     "Seçici Risk Kabul (Daha İyi Portföy)": {
         "p_claim": 0.05,
         "mean_loss": 20_000,
-        "label": "Risk kabul seçiciliği yüksek; portföy daha kaliteli",
+        "label": "Daha düşük hasar olasılığı ve daha düşük ortalama hasar",
         "market_logic": (
-            "**Kısa açıklama:**\n"
-            "- **Risk kabul seçiciliği (Underwriting seçiciliği):** Poliçeye kabul kriterlerinin sıkı olması.\n"
-            "- **Rekabet baskısı:** Fiyat kırma baskısının görece düşük olması.\n"
-            "- **Ters seçim riski (Adverse selection):** Daha riskli müşterilerin ‘ucuz’ poliçeye yönelmesi riski (burada daha düşüktür)."
+            "**Ne demek?**\n"
+            "- Şirket daha düşük riskli poliçeler satıyor varsayılır.\n"
+            "- Bu yüzden hasar daha seyrek ve/veya daha düşük tutarda gelir.\n"
+            "- Rekabet baskısı görece düşüktür (fiyat kırma daha azdır)."
         )
     },
     "Standart Piyasa": {
@@ -140,21 +140,21 @@ SCENARIOS = {
         "mean_loss": 25_000,
         "label": "Ortalama risk karışımı; tipik piyasa dengesi",
         "market_logic": (
-            "**Kısa açıklama:**\n"
-            "- Risk kabul kriterleri standarttır.\n"
+            "**Ne demek?**\n"
+            "- Piyasa ortalamasına yakın bir risk düzeyi varsayılır.\n"
             "- Rekabet baskısı orta düzeydedir.\n"
-            "- Ters seçim riski belirgin değildir ama her zaman ihtimal dahilindedir."
+            "- Hasar olasılığı ve ortalama hasar ‘referans’ seviyededir."
         )
     },
-    "Yoğun Rekabet / Ters Seçim Riski Yüksek": {
+    "Yoğun Rekabet (Zayıf Fiyat Disiplini)": {
         "p_claim": 0.12,
         "mean_loss": 32_000,
-        "label": "Fiyat rekabeti yüksek; portföy kalitesi bozulabilir",
+        "label": "Hasar olasılığı ve ortalama hasar daha yüksek (daha zorlu koşul)",
         "market_logic": (
-            "**Kısa açıklama:**\n"
-            "- **Rekabet baskısı:** Fiyat kırma eğilimi artar.\n"
-            "- **Ters seçim riski (Adverse selection):** Görece daha riskli müşteri profili şirkete çekilebilir.\n"
-            "- Risk kabul seçiciliği zayıflarsa hasar sıklığı/tutarı yükselme eğilimindedir."
+            "**Ne demek?**\n"
+            "- Rekabet baskısı yüksektir: fiyat kırma eğilimi artar.\n"
+            "- Daha riskli poliçelerin portföye gelmesi olasıdır.\n"
+            "- Bu nedenle hasar daha sık ve/veya daha yüksek tutarda gerçekleşebilir."
         )
     },
 }
@@ -191,7 +191,7 @@ premium_choice = suggested_gross * (st.session_state.premium_factor / 100.0)
 # Başlık + pano
 # =============================
 st.title("📊 Sigortacılığın Temel Mantığı — Fiyatlama Simülasyonu")
-st.caption("Prim (fiyat) → satış hacmi → hasar + gider → teknik sonuç → sermaye. Her adım kısa ve öğretici.")
+st.caption("Prim (fiyat) → satış hacmi → hasar + gider → teknik sonuç → sermaye")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Fiyatlama Dönemi", f"{st.session_state.period} / 12")
@@ -251,7 +251,7 @@ Bir poliçenin, bir fiyatlama döneminde ortalama ne kadar hasar maliyeti üretm
 # Wizard başlıkları
 # =============================
 steps_title = {
-    1: "1) Piyasa/Risk Profili",
+    1: "1) Piyasa Koşulu (Hasar Seviyesi)",
     2: "2) Prim Bileşenleri",
     3: "3) Prim Düzeyi (Fiyatlama)",
     4: "4) Talep Varsayımı",
@@ -262,18 +262,20 @@ if st.session_state.step in [1, 2, 3, 4, 5]:
     st.progress(st.session_state.step / 5)
 
 # =============================
-# 1) Profil
+# 1) Profil (metin sadeleştirildi)
 # =============================
 if st.session_state.step == 1:
     st.markdown(
         """
-Burada seçtiğin profil, piyasadaki **risk kabul kalitesi** ve **rekabet koşulları** ile ilgilidir.
-Bu seçim, hasar olasılığını (p) ve ortalama hasarı değiştirir.
+Bu adımda **piyasanın hasar seviyesini** seçiyorsun.  
+Seçim iki şeyi belirler:
+- **Hasar olasılığı (p)**: Bu dönemde bir poliçenin hasara dönme ihtimali
+- **Ortalama hasar**: Hasar olursa ortalama ne kadar ödeme çıkacağı
         """
     )
 
     scenario = st.radio(
-        "Piyasa/Risk profili seç",
+        "Piyasa koşulu seç",
         list(SCENARIOS.keys()),
         index=list(SCENARIOS.keys()).index(st.session_state.scenario),
         horizontal=True,
@@ -285,12 +287,12 @@ Bu seçim, hasar olasılığını (p) ve ortalama hasarı değiştirir.
     mean_loss = SCENARIOS[scenario]["mean_loss"]
     expected_loss_per_policy = p_claim * mean_loss
 
-    st.success(f"**Profil:** {SCENARIOS[scenario]['label']}")
+    st.success(f"**Koşul:** {SCENARIOS[scenario]['label']}")
     st.info(SCENARIOS[scenario]["market_logic"])
 
     st.markdown(
         f"""
-**Bu profilde sayılar:**  
+**Bu koşulda sayılar:**  
 - p = **{p_claim:.2f}**  
 - Ortalama hasar = **{fmt_tl(mean_loss)}**  
 - Beklenen hasar/poliçe = **{fmt_tl(expected_loss_per_policy)}**
@@ -300,7 +302,7 @@ Bu seçim, hasar olasılığını (p) ve ortalama hasarı değiştirir.
     st.divider()
     st.write("Mini Soru:")
     ans = st.radio(
-        "Ters seçim riski yükselirse (daha riskli portföy gelirse) teknik prim için en doğru ifade hangisidir?",
+        "Hasar olasılığı (p) artarsa, beklenen hasar/poliçe için en doğru ifade hangisidir?",
         ["Azalır", "Artar", "Değişmez"],
         index=0,
         key="q1"
@@ -315,7 +317,7 @@ Bu seçim, hasar olasılığını (p) ve ortalama hasarı değiştirir.
         if st.session_state.quiz_ok[1]:
             st.success("Doğru.")
         else:
-            st.warning("Yanlış. İpucu: Teknik prim = beklenen hasar/poliçe.")
+            st.warning("Yanlış. İpucu: beklenen hasar = p × ortalama hasar.")
 
     b1, b2 = st.columns(2)
     if b1.button("⬅ Geri", use_container_width=True):
@@ -490,7 +492,7 @@ elif st.session_state.step == 5:
     st.session_state.seed = int(st.number_input("Rastgelelik (seed) (opsiyonel)", min_value=0, value=int(st.session_state.seed), step=1))
 
     summary = {
-        "Piyasa/Risk profili": st.session_state.scenario,
+        "Piyasa koşulu": st.session_state.scenario,
         "p": p_claim,
         "Ortalama hasar": fmt_tl(mean_loss),
         "Beklenen hasar/poliçe": fmt_tl(expected_loss_per_policy),
@@ -558,7 +560,7 @@ elif st.session_state.step == 5:
         st.rerun()
 
 # =============================
-# Sonuçlar + Koç (Koç tablonun hemen altında)
+# Sonuçlar + Koç
 # =============================
 st.divider()
 
@@ -586,7 +588,6 @@ if st.session_state.history:
     st.subheader("📊 Sonuç Tablosu")
     st.dataframe(df, use_container_width=True)
 
-    # Koç: tablonun hemen altında
     st.subheader("🧠 Koç: Bu dönem ne oldu, bir sonraki adım ne olmalı?")
     diagnosis, actions, roadmap = compute_last_insights(df, suggested_gross, premium_choice)
 
