@@ -26,23 +26,19 @@ def demand_from_premium(premium: float, base_policies: int, reference_premium: f
     demand_factor = np.exp(-sensitivity * (ratio - 1.0))
     return max(0, int(round(base_policies * demand_factor)))
 
-def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choice: float, premium_factor: int):
+def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choice: float):
     """Son dönemi okuyup öğrenciye net öneriler döndürür."""
     last = df.iloc[-1].to_dict()
 
     premium_income = float(last["Prim Geliri"])
-    claims = float(last["Toplam Hasar"])
-    expense = float(last["Gider"])
-    uw = float(last["UW Sonucu"])
     cr = float(last["Combined Ratio"])
     n_pol = int(last["Poliçe"])
-    cap = float(last["Sermaye"])
 
-    # Basit eşikler
-    demand_ratio = n_pol / max(1, int(last["Pazar (referans)"]))
+    base_market = int(last.get("Pazar (referans)", 0)) or 1
+    demand_ratio = n_pol / base_market
+
     price_gap = premium_choice / max(1.0, suggested_gross)  # >1 pahalı, <1 ucuz
 
-    # Yorum blokları
     diagnosis = []
     actions = []
     roadmap = []
@@ -51,7 +47,6 @@ def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choi
     if premium_income == 0:
         diagnosis.append("Talep neredeyse sıfır: prim çok yüksek olduğu için poliçe gelmedi.")
         actions.append("Prim düzeyini düşür (ör. önerilen brüt primin %90–%110 bandına gel).")
-        actions.append("Fiyata duyarlılık yüksekse (2+), prim artışı talebi çok hızlı düşürür.")
     else:
         if cr < 1.0:
             diagnosis.append(f"Bu tur **teknik kâr** var: Combined Ratio = {cr:.2f} (< 1).")
@@ -61,40 +56,31 @@ def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choi
             actions.append("Prim düzeyini bir kademe artır (örn. +%5–%10) veya gider yüklemesini azaltmayı dene.")
         else:
             diagnosis.append(f"Bu tur **belirgin teknik zarar**: Combined Ratio = {cr:.2f} (>> 1).")
-            actions.append("Prim düzeyini artır (+%10–%20) VE/VEYA daha az riskli senaryoya geçmeyi dene (öğrenme için).")
+            actions.append("Prim düzeyini artır (+%10–%20) ve ‘Normal’ senaryoda dengeyi tekrar kurmayı dene.")
 
-    # 2) Prim seviyesi ve talep (piyasa) yorumu
+    # 2) Prim seviyesi yorumu
     if price_gap < 0.9:
         diagnosis.append("Prim, önerilen brüt primin epey altında: müşteri artabilir ama hasar şoku sermayeyi eritebilir.")
-        actions.append("Eğer CR>1 ise: önce prim seviyesini önerilen banda yaklaştır.")
+        actions.append("CR>1 ise önce prim seviyesini önerilen banda yaklaştır.")
     elif price_gap > 1.1:
         diagnosis.append("Prim, önerilen brüt primin üstünde: zarar riski azalır ama talep düşebilir.")
         actions.append("Talep çok düştüyse (poliçe az): prim seviyesini biraz geri çek (örn. -%5).")
     else:
-        diagnosis.append("Prim, önerilen brüt prime yakın: fiyatlama açısından dengeli bir bölgede deneme yapıyorsun.")
+        diagnosis.append("Prim, önerilen brüt prime yakın: dengeli bir bölgede deneme yapıyorsun.")
 
     # 3) Talep yeterli mi?
     if demand_ratio < 0.6:
         diagnosis.append("Talep zayıf (poliçe az). Piyasa primine göre pahalı kalmış olabilirsin veya duyarlılık yüksek.")
-        actions.append("Talebi artırmak için prim düzeyini düşür veya fiyata duyarlılığı azalt (piyasa daha az hassas).")
+        actions.append("Talebi artırmak için prim düzeyini düşür veya piyasa duyarlılığını azalt (daha az hassas piyasa).")
     elif demand_ratio > 1.2:
         diagnosis.append("Talep güçlü (poliçe yüksek). Havuz büyüdükçe sonuçlar beklenene yaklaşma eğilimindedir (risk havuzu etkisi).")
-        actions.append("CR iyi ise büyümeyi sürdür; CR kötü ise talep artışı prim yetersizliğini büyütebilir (prim artır).")
+        actions.append("CR iyi ise büyümeyi sürdür; CR kötü ise prim yetersizliğini büyütebilir (prim artır).")
 
-    # 4) Sermaye trendi (basit)
-    if len(df) >= 3:
-        cap_change = df["Sermaye"].iloc[-1] - df["Sermaye"].iloc[-3]
-        if cap_change < 0:
-            roadmap.append("Son 3 dönemde sermaye düşüyor: önce **kârlılık stabilitesi** hedefle (CR<1).")
-        else:
-            roadmap.append("Son 3 dönemde sermaye artıyor: önce dengeyi koru, sonra kontrollü büyüme dene.")
-    else:
-        roadmap.append("Henüz az tur var: önce CR’yi 1’in altına çekmeye odaklan.")
-
-    # Yol haritası: 3 adım
-    roadmap.append("1) Risk: Senaryo ‘Daha Riskli’ ise öğrenme için önce ‘Normal’ ile denge kur, sonra riskliyi dene.")
-    roadmap.append("2) Fiyat: Prim düzeyini %90–%110 bandında test et, CR’ye göre yukarı/aşağı ayarla.")
-    roadmap.append("3) Piyasa: Duyarlılık yüksekse küçük fiyat artışı talebi hızlı düşürür; bunu bilerek hareket et.")
+    # Yol haritası (strateji şablonu)
+    roadmap.append("1) Önce denge: Combined Ratio’yu 1’in altına çek (kârlılık).")
+    roadmap.append("2) Sonra büyüme: CR<1 ise primde küçük indirimlerle talebi test et (kontrollü).")
+    roadmap.append("3) Piyasa hassassa: küçük prim artışı talebi hızlı düşürür; prim ayarını küçük adımlarla yap.")
+    roadmap.append("4) Riskli senaryoyu en sona bırak: önce ‘Normal’ ile mantığı oturt, sonra ‘Daha Riskli’ ile şoku gör.")
 
     return diagnosis, actions, roadmap
 
@@ -140,7 +126,7 @@ def init_state():
 init_state()
 
 # =============================
-# Senaryolar (risk tipi + rehber metin)
+# Senaryolar (risk tipi + rehber)
 # =============================
 SCENARIOS = {
     "Daha Az Riskli": {
@@ -199,10 +185,16 @@ with st.sidebar:
 # Navigation
 # =============================
 def go_next():
-    st.session_state.step = 1 if st.session_state.step == 0 else min(5, st.session_state.step + 1)
+    if st.session_state.step == 0:
+        st.session_state.step = 1
+    else:
+        st.session_state.step = min(5, st.session_state.step + 1)
 
 def go_prev():
-    st.session_state.step = 0 if st.session_state.step == 1 else max(0, st.session_state.step - 1)
+    if st.session_state.step == 1:
+        st.session_state.step = 0
+    else:
+        st.session_state.step = max(0, st.session_state.step - 1)
 
 # =============================
 # INTRO
@@ -212,13 +204,15 @@ if st.session_state.step == 0:
     st.markdown(
         """
 **Ne yapacaksın?** Her dönemde prim belirleyeceksin → prim talebi etkiler → hasarlar gelir → giderler düşülür → sermaye güncellenir.  
+
 **Tek ana fikir:**  
 - **Beklenen hasar/poliçe = p × ortalama hasar**  
-- **Brüt prim = beklenen hasar + gider + belirsizlik tamponu (güvenlik/kâr payı)**
+- **Brüt prim = beklenen hasar + gider + belirsizlik tamponu**
 
 İlerlemek için 1 mini soru:
         """
     )
+
     ans = st.radio(
         "Beklenen hasar/poliçe hangi iki şeyin çarpımıdır?",
         ["ortalama hasar × gider", "hasar olasılığı (p) × ortalama hasar", "prim × poliçe sayısı"],
@@ -226,42 +220,50 @@ if st.session_state.step == 0:
     )
     ok = (ans == "hasar olasılığı (p) × ortalama hasar")
     st.session_state.quiz_ok["intro"] = ok
-    st.success("Doğru!") if ok else st.warning("İpucu: p hasar olasılığıdır.")
+
+    if ok:
+        st.success("Doğru!")
+    else:
+        st.warning("İpucu: p hasar olasılığıdır.")
+
     st.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
 
 # =============================
-# Wizard titles
+# Wizard başlıkları
 # =============================
 steps_title = {1:"1) Risk Senaryosu", 2:"2) Prim Bileşenleri", 3:"3) Prim Kararı", 4:"4) Piyasa (Talep)", 5:"5) Özet & Oynat"}
 if st.session_state.step in [1,2,3,4,5]:
     st.subheader(f"🧭 {steps_title[st.session_state.step]}")
-    st.progress(st.session_state.step/5)
+    st.progress(st.session_state.step / 5)
 
 # =============================
-# 1) Risk (rehberli)
+# 1) Risk
 # =============================
 if st.session_state.step == 1:
     st.markdown(
         """
 ### Bu adımda ne seçiyorsun?
 **Risk tipi**, iki parçadan oluşur:
-- **Hasar olasılığı (p)**: Dönemde hasar olur mu?
-- **Ortalama hasar**: Hasar olursa ortalama ne kadar?
+- **Hasar olasılığı (p)**
+- **Ortalama hasar**
 
 > Risk yükselirse beklenen hasar artar → **teknik prim** artmalıdır.
         """
     )
 
     st.info(
-        "🧭 Seçim rehberi:  \n"
-        "- İlk kez oynuyorsan: **Normal** (en öğretici denge)  \n"
-        "- Mantığı hızla görmek istiyorsan: **Daha Az Riskli** (daha stabil sonuç)  \n"
-        "- ‘Prim yetersiz kalırsa ne olur?’ görmek istiyorsan: **Daha Riskli** (volatilite)"
+        "🧭 Seçim rehberi:\n"
+        "- İlk kez oynuyorsan: **Normal**\n"
+        "- Daha stabil sonuç istiyorsan: **Daha Az Riskli**\n"
+        "- ‘Şok’ görmek istiyorsan: **Daha Riskli**"
     )
 
-    scenario = st.radio("Risk senaryosu seç", list(SCENARIOS.keys()),
-                        index=list(SCENARIOS.keys()).index(st.session_state.scenario),
-                        horizontal=True)
+    scenario = st.radio(
+        "Risk senaryosu seç",
+        list(SCENARIOS.keys()),
+        index=list(SCENARIOS.keys()).index(st.session_state.scenario),
+        horizontal=True
+    )
     st.session_state.scenario = scenario
 
     p_claim = SCENARIOS[scenario]["p_claim"]
@@ -276,36 +278,37 @@ if st.session_state.step == 1:
     ans = st.radio("Mini Soru: Risk artarsa teknik prim ne olur?", ["Azalır", "Artar", "Değişmez"], index=0, key="q1")
     ok = (ans == "Artar")
     st.session_state.quiz_ok[1] = ok
-    st.success("Doğru: Teknik prim = beklenen hasar.") if ok else st.warning("İpucu: Teknik prim beklenen hasardır.")
-    c1,c2 = st.columns(2)
+
+    if ok:
+        st.success("Doğru: Teknik prim = beklenen hasar.")
+    else:
+        st.warning("İpucu: Teknik prim beklenen hasardır.")
+
+    c1, c2 = st.columns(2)
     c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
     c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
 
 # =============================
-# 2) Teknik prim + gider + tampon (çok net)
+# 2) Prim bileşenleri
 # =============================
 elif st.session_state.step == 2:
     st.markdown(
         """
 ### Prim bileşenleri (çok net)
-**1) Teknik prim (risk maliyeti)**  
-- Poliçe başına beklenen hasar: **p × ortalama hasar**  
-- Bu sadece “hasar ödeme” kısmıdır.
+**1) Teknik prim (risk maliyeti)** = poliçe başına beklenen hasar (**p × ortalama hasar**)
 
 **2) Gider yüklemesi (işletme maliyeti)**  
-- Komisyon, personel, operasyon, IT, genel gider…  
-- Basit model: **Gider = Prim geliri × gider oranı**
+Komisyon, personel, operasyon, IT vb.
 
 **3) Belirsizlik tamponu / güvenlik–kâr payı**  
-- Hasarlar her tur beklenenin üstüne çıkabilir (belirsizlik).  
-- Bu pay, kötü senaryolara karşı “tampon” + kâr beklentisidir.
+Hasarlar her tur beklenenin üstüne çıkabilir. Bu pay “tampon” sağlar.
 
-> Bu üçü birleşince **brüt prim** oluşur.
+> **Brüt prim = teknik prim × (1 + gider + tampon/kâr)**
         """
     )
 
-    st.session_state.expense_loading = st.slider("Gider yüklemesi (%)", 0, 50, int(st.session_state.expense_loading*100), 1) / 100
-    st.session_state.profit_loading = st.slider("Belirsizlik tamponu / güvenlik–kâr (%)", 0, 50, int(st.session_state.profit_loading*100), 1) / 100
+    st.session_state.expense_loading = st.slider("Gider yüklemesi (%)", 0, 50, int(st.session_state.expense_loading * 100), 1) / 100
+    st.session_state.profit_loading = st.slider("Belirsizlik tamponu / güvenlik–kâr (%)", 0, 50, int(st.session_state.profit_loading * 100), 1) / 100
 
     p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
     mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
@@ -313,8 +316,8 @@ elif st.session_state.step == 2:
     suggested_gross = expected_loss_per_policy * (1 + st.session_state.expense_loading + st.session_state.profit_loading)
 
     st.success(
-        f"Teknik prim (beklenen hasar/poliçe): **{fmt_tl(expected_loss_per_policy)}**  \n"
-        f"Gider oranı: **{fmt_pct(st.session_state.expense_loading)}**, Tampon/Kâr: **{fmt_pct(st.session_state.profit_loading)}**  \n"
+        f"Teknik prim: **{fmt_tl(expected_loss_per_policy)}**\n\n"
+        f"Gider oranı: **{fmt_pct(st.session_state.expense_loading)}**, Tampon/Kâr: **{fmt_pct(st.session_state.profit_loading)}**\n\n"
         f"Önerilen brüt prim/poliçe: **{fmt_tl(suggested_gross)}**"
     )
 
@@ -322,30 +325,32 @@ elif st.session_state.step == 2:
     ans = st.radio("Mini Soru: Gider oranı artarsa brüt prim ne olur?", ["Azalır", "Artar", "Değişmez"], index=0, key="q2")
     ok = (ans == "Artar")
     st.session_state.quiz_ok[2] = ok
-    st.success("Doğru: Yükleme artarsa brüt prim artar.") if ok else st.warning("İpucu: Brüt prim = teknik prim + yüklemeler.")
-    c1,c2 = st.columns(2)
+
+    if ok:
+        st.success("Doğru: Yükleme artarsa brüt prim artar.")
+    else:
+        st.warning("İpucu: Brüt prim = teknik prim + yüklemeler.")
+
+    c1, c2 = st.columns(2)
     c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
     c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
 
 # =============================
-# 3) Prim kararı (kavramsal)
+# 3) Prim kararı
 # =============================
 elif st.session_state.step == 3:
     st.markdown(
         """
-### Bu adımda ne yapıyorsun?
-Önerilen brüt primi referans alıp **satış primini** seçiyorsun.
+### Prim kararı
+Önerilen brüt primi referans alıp satış primini seçiyorsun.
 
-- Prim düşük → talep artabilir → ama prim yetersizse **Combined Ratio** bozulabilir.
-- Prim yüksek → talep düşebilir → ama zarar riski azalabilir.
-
-> Burada asıl ders: **fiyatlama–talep–kârlılık dengesi**.
+- **Düşük prim** → daha çok müşteri olabilir ama zarar riski artabilir  
+- **Yüksek prim** → müşteri azalabilir ama zarar riski azalabilir
         """
     )
 
     st.session_state.premium_factor = st.slider("Prim düzeyi (önerilen brüt primin %’si)", 60, 160, int(st.session_state.premium_factor), 5)
 
-    # güncel
     p_claim = SCENARIOS[st.session_state.scenario]["p_claim"]
     mean_loss = SCENARIOS[st.session_state.scenario]["mean_loss"]
     expected_loss_per_policy = p_claim * mean_loss
@@ -360,28 +365,34 @@ elif st.session_state.step == 3:
         st.success(f"Seçim: **Dengeli prim** ({fmt_tl(premium_choice)})")
 
     st.divider()
-    ans = st.radio("Mini Soru: Prim çok düşerse en olası etki nedir?",
-                   ["Müşteri artar ama zarar riski artar", "Müşteri azalır ve zarar riski azalır", "Hiçbir şey değişmez"],
-                   index=0, key="q3")
+    ans = st.radio(
+        "Mini Soru: Prim çok düşerse en olası etki nedir?",
+        ["Müşteri artar ama zarar riski artar", "Müşteri azalır ve zarar riski azalır", "Hiçbir şey değişmez"],
+        index=0,
+        key="q3"
+    )
     ok = (ans == "Müşteri artar ama zarar riski artar")
     st.session_state.quiz_ok[3] = ok
-    st.success("Doğru.") if ok else st.warning("İpucu: fiyat ↓ → talep ↑, ama prim yetersiz kalabilir.")
-    c1,c2 = st.columns(2)
+
+    if ok:
+        st.success("Doğru.")
+    else:
+        st.warning("İpucu: fiyat ↓ → talep ↑, ama prim yetersiz kalabilir.")
+
+    c1, c2 = st.columns(2)
     c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
     c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
 
 # =============================
-# 4) Piyasa (talep)
+# 4) Piyasa
 # =============================
 elif st.session_state.step == 4:
     st.markdown(
         """
-### Talep (poliçe sayısı) nasıl oluşuyor?
-Bu modelde talep iki şeye bağlı:
-- **Pazar büyüklüğü (referans poliçe):** fiyat makulse beklenen müşteri sayısı
-- **Fiyata duyarlılık:** fiyat artınca müşterinin kaçma hızı
-
-> Ders: Aynı prim kararı farklı piyasalarda farklı sonuç verir.
+### Piyasa (talep)
+Talep iki şeye bağlı:
+- **Pazar büyüklüğü (referans poliçe)**  
+- **Fiyata duyarlılık** (prim artınca müşterinin kaçma hızı)
         """
     )
 
@@ -397,12 +408,21 @@ Bu modelde talep iki şeye bağlı:
     st.info(f"Bu fiyatta tahmini poliçe sayısı: **{n_est:,}**")
 
     st.divider()
-    ans = st.radio("Mini Soru: Duyarlılık çok yüksekse (3), prim artınca ne olur?",
-                   ["Talep daha hızlı düşer", "Talep artar", "Talep değişmez"], index=0, key="q4")
+    ans = st.radio(
+        "Mini Soru: Duyarlılık çok yüksekse (3), prim artınca ne olur?",
+        ["Talep daha hızlı düşer", "Talep artar", "Talep değişmez"],
+        index=0,
+        key="q4"
+    )
     ok = (ans == "Talep daha hızlı düşer")
     st.session_state.quiz_ok[4] = ok
-    st.success("Doğru.") if ok else st.warning("İpucu: duyarlılık ↑ → fiyat artışına tepki ↑")
-    c1,c2 = st.columns(2)
+
+    if ok:
+        st.success("Doğru.")
+    else:
+        st.warning("İpucu: duyarlılık ↑ → fiyat artışına tepki ↑")
+
+    c1, c2 = st.columns(2)
     c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
     c2.button("İleri ➜", on_click=go_next, disabled=not ok, use_container_width=True)
 
@@ -410,7 +430,7 @@ Bu modelde talep iki şeye bağlı:
 # 5) Özet & Oynat
 # =============================
 elif st.session_state.step == 5:
-    st.markdown("Seçimlerini gör ve **1 dönem oynat**. Sonra koç paneli sana sonuçları açıklayıp öneri verecek.")
+    st.markdown("Seçimlerini gör ve **1 dönem oynat**. Sonra koç paneli sana yorum ve öneri verecek.")
 
     st.session_state.seed = int(st.number_input("Rastgelelik (seed) (opsiyonel)", min_value=0, value=int(st.session_state.seed), step=1))
 
@@ -450,13 +470,13 @@ elif st.session_state.step == 5:
         st.session_state.capital += uw_result
         combined_ratio = (total_loss + expense) / premium_income if premium_income > 0 else 0.0
 
-        # Kısa yorum
         if premium_income == 0:
             comment = "Prim çok yüksek → talep düştü → poliçe yok. Öğrenme için primini düşürmeyi dene."
-        elif combined_ratio < 1.0:
-            comment = "✅ Teknik kâr: Combined Ratio < 1. (Bu turda prim/hasar dengesi lehine.)"
         else:
-            comment = "⚠️ Teknik zarar: Combined Ratio > 1. (Prim yetersiz veya hasar şoku yüksek.)"
+            if combined_ratio < 1.0:
+                comment = "✅ Teknik kâr: Combined Ratio < 1. (Bu turda prim/hasar dengesi lehine.)"
+            else:
+                comment = "⚠️ Teknik zarar: Combined Ratio > 1. (Prim yetersiz veya hasar şoku yüksek.)"
 
         st.session_state.last_commentary = comment
 
@@ -474,12 +494,12 @@ elif st.session_state.step == 5:
             "Sermaye": st.session_state.capital
         })
 
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     c1.button("⬅ Geri", on_click=go_prev, use_container_width=True)
-    c2.button("▶️ 1 Dönem Oynat", on_click=play_one_period, use_container_width=True)
+    c2.button("▶️ 1 dönem oynat", on_click=play_one_period, use_container_width=True)
 
 # =============================
-# Sonuçlar + Koç paneli
+# Sonuçlar + Koç
 # =============================
 st.divider()
 
@@ -489,18 +509,17 @@ if st.session_state.last_commentary:
 if st.session_state.history:
     df = pd.DataFrame(st.session_state.history)
 
-    # ---- Tablo kalem açıklamaları
     with st.expander("📘 Sonuç tablosundaki kalemler ne anlama geliyor?", expanded=False):
         st.markdown(
             """
 - **Poliçe:** Bu tur satılan poliçe sayısı (talep sonucu).  
-- **Pazar (referans):** “Fiyat makulse” beklenen poliçe büyüklüğü (piyasa varsayımı).  
+- **Pazar (referans):** Fiyat makulse beklenen poliçe büyüklüğü (piyasa varsayımı).  
 - **Prim/poliçe:** Senin belirlediğin satış primi.  
 - **Prim Geliri:** Poliçe × Prim/poliçe.  
 - **Hasar Adedi:** Bu tur gerçekleşen hasar sayısı (rastgele).  
 - **Toplam Hasar:** Hasarların toplam tutarı (rastgele).  
 - **Gider:** Prim gelirinin gider oranı kadarı (işletme maliyeti).  
-- **UW Sonucu (Underwriting):** Prim Geliri − Toplam Hasar − Gider. (+) kâr, (−) zarar.  
+- **UW Sonucu:** Prim Geliri − Toplam Hasar − Gider. (+) kâr, (−) zarar.  
 - **Combined Ratio:** (Toplam Hasar + Gider) / Prim Geliri. **<1 kâr**, **>1 zarar**.  
 - **Sermaye:** Tüm dönemlerin birikimli sonucu (şirketin tampon gücü).
             """
@@ -514,16 +533,10 @@ if st.session_state.history:
     st.line_chart(df.set_index("Dönem")[["Combined Ratio"]])
     st.line_chart(df.set_index("Dönem")[["Sermaye"]])
 
-    # ---- Koç: yorum + öneri + yol haritası
     st.subheader("🧠 Koç: Bu tur ne oldu, ne yapmalısın?")
-    diagnosis, actions, roadmap = compute_last_insights(
-        df=df,
-        suggested_gross=suggested_gross,
-        premium_choice=premium_choice,
-        premium_factor=int(st.session_state.premium_factor)
-    )
+    diagnosis, actions, roadmap = compute_last_insights(df, suggested_gross, premium_choice)
 
-    cL, cR = st.columns([1,1])
+    cL, cR = st.columns([1, 1])
     with cL:
         st.markdown("### 📌 Teşhis (yorum)")
         for d in diagnosis:
@@ -531,14 +544,13 @@ if st.session_state.history:
 
     with cR:
         st.markdown("### ✅ Öneri (bir sonraki tur için)")
-        for a in actions[:6]:
+        for a in actions[:8]:
             st.write("•", a)
 
     st.markdown("### 🧭 Yol haritası (strateji değiştirirken elinde dursun)")
     for r in roadmap:
         st.write("•", r)
 
-    # Oyun sonu
     if st.session_state.t >= 12:
         if st.session_state.capital > st.session_state.capital0:
             st.balloons()
