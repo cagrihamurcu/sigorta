@@ -117,6 +117,8 @@ def init_state():
         st.session_state.seed = 0
     if "last_commentary" not in st.session_state:
         st.session_state.last_commentary = ""
+    if "_scroll_top" not in st.session_state:
+        st.session_state._scroll_top = False
 
 init_state()
 
@@ -160,13 +162,15 @@ SCENARIOS = {
 }
 
 # =============================
-# Navigation
+# Navigation (Scroll-to-top eklendi)
 # =============================
 def go_next():
     st.session_state.step = 1 if st.session_state.step == 0 else min(5, st.session_state.step + 1)
+    st.session_state._scroll_top = True
 
 def go_prev():
     st.session_state.step = 0 if st.session_state.step == 1 else max(0, st.session_state.step - 1)
+    st.session_state._scroll_top = True
 
 def hard_reset():
     st.session_state.step = 0
@@ -176,6 +180,19 @@ def hard_reset():
     st.session_state.last_commentary = ""
     st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
     st.session_state.quiz_submitted = {"intro": False, 1: False, 2: False, 3: False, 4: False}
+    st.session_state._scroll_top = True
+
+# =============================
+# Scroll anchor (en üste)
+# =============================
+TOP = st.empty()
+TOP.markdown("###")
+
+# Adım değiştiyse yukarı taşı (TOP'u yeniden çiz)
+if st.session_state.get("_scroll_top", False):
+    TOP.empty()
+    TOP.markdown("###")
+    st.session_state._scroll_top = False
 
 # =============================
 # Üst hesaplar
