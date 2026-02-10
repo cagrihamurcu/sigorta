@@ -489,7 +489,6 @@ Prim “rekabetçi/makul” seviyedeyken, bu fiyatlama döneminde satılmasını
 # =============================
 elif st.session_state.step == 5:
     st.markdown("Seçimlerini kontrol et ve **bu primle piyasaya çık** (1 fiyatlama dönemi simülasyonu).")
-    st.session_state.seed = int(st.number_input("Rastgelelik (seed) (opsiyonel)", min_value=0, value=int(st.session_state.seed), step=1))
 
     summary = {
         "Piyasa koşulu": st.session_state.scenario,
@@ -522,7 +521,7 @@ elif st.session_state.step == 5:
             n_policies=n_policies,
             p_claim=p_claim,
             mean_loss=mean_loss,
-            seed=(st.session_state.seed + st.session_state.period) if st.session_state.seed != 0 else None
+            seed=None
         )
 
         premium_income = float(n_policies) * float(premium_choice)
