@@ -1,8 +1,8 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 from typing import Optional
-import time
 
 st.set_page_config(page_title="Sigorta Temel Mantık Simülasyonu (Eğitici + Koç)", layout="wide")
 
@@ -119,28 +119,27 @@ def init_state():
     if "last_commentary" not in st.session_state:
         st.session_state.last_commentary = ""
 
+    # scroll flag
+    if "_do_scroll" not in st.session_state:
+        st.session_state._do_scroll = False
+
 init_state()
 
 # =============================
-# URL (query param) ile adımı senkronla (scroll reset için)
+# Scroll-to-top (en üstte çalışır)
 # =============================
-try:
-    qp = st.query_params  # yeni Streamlit
-    if "step" in qp:
-        st.session_state.step = int(qp["step"])
-except Exception:
-    q = st.experimental_get_query_params()
-    if "step" in q:
-        st.session_state.step = int(q["step"][0])
-
-def _set_step_in_url(step: int):
-    # URL değişsin diye küçük bir "t" paramı da ekliyoruz (cache etkisini kırar)
-    t = str(int(time.time() * 1000))
-    try:
-        st.query_params["step"] = str(step)
-        st.query_params["t"] = t
-    except Exception:
-        st.experimental_set_query_params(step=str(step), t=t)
+if st.session_state.get("_do_scroll", False):
+    components.html(
+        """
+        <script>
+          try { window.parent.scrollTo({top: 0, left: 0, behavior: 'instant'}); }
+          catch (e) { window.parent.scrollTo(0,0); }
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+    st.session_state._do_scroll = False
 
 # =============================
 # Piyasa/Risk Profili (terminoloji sadeleştirildi)
@@ -182,15 +181,15 @@ SCENARIOS = {
 }
 
 # =============================
-# Navigation (URL sync + scroll reset)
+# Navigation (scroll flag eklendi)
 # =============================
 def go_next():
     st.session_state.step = 1 if st.session_state.step == 0 else min(5, st.session_state.step + 1)
-    _set_step_in_url(st.session_state.step)
+    st.session_state._do_scroll = True
 
 def go_prev():
     st.session_state.step = 0 if st.session_state.step == 1 else max(0, st.session_state.step - 1)
-    _set_step_in_url(st.session_state.step)
+    st.session_state._do_scroll = True
 
 def hard_reset():
     st.session_state.step = 0
@@ -200,7 +199,7 @@ def hard_reset():
     st.session_state.last_commentary = ""
     st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
     st.session_state.quiz_submitted = {"intro": False, 1: False, 2: False, 3: False, 4: False}
-    _set_step_in_url(0)
+    st.session_state._do_scroll = True
 
 # =============================
 # Üst hesaplar
@@ -581,6 +580,7 @@ elif st.session_state.step == 5:
 
     if b2.button("📣 Bu primle piyasaya çık (1 dönem simüle et)", use_container_width=True):
         simulate_one_pricing_period()
+        st.session_state._do_scroll = True  # simülasyon sonrası da yukarı al
         st.rerun()
 
 # =============================
