@@ -4,6 +4,15 @@ import pandas as pd
 from typing import Optional
 
 st.set_page_config(page_title="Sigorta Temel Mantık Simülasyonu (Eğitici + Koç)", layout="wide")
+# Sayfa her yeniden yüklendiğinde yukarı scroll et
+st.markdown(
+    """
+    <script>
+        window.scrollTo(0, 0);
+    </script>
+    """,
+    unsafe_allow_html=True
+)
 
 # =============================
 # Yardımcılar
