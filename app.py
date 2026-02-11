@@ -1,9 +1,44 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 from typing import Optional
 
 st.set_page_config(page_title="Sigorta Temel Mantık Simülasyonu (Eğitici + Koç)", layout="wide")
+
+# =============================
+# Scroll helper (SADECE yukarı kaydırma)
+# =============================
+def _init_scroll_state():
+    if "_scroll_to_top" not in st.session_state:
+        st.session_state._scroll_to_top = False
+
+def _trigger_scroll_to_top():
+    st.session_state._scroll_to_top = True
+
+def _run_scroll_if_needed():
+    # Sayfanın en üstünde çalışmalı
+    if st.session_state.get("_scroll_to_top", False):
+        components.html(
+            """
+            <script>
+              (function() {
+                try { window.scrollTo(0,0); } catch(e) {}
+                try { document.documentElement.scrollTop = 0; } catch(e) {}
+                try { document.body.scrollTop = 0; } catch(e) {}
+
+                // Streamlit genelde iframe içinde çalıştığı için parent'ı da deneriz
+                try { window.parent.scrollTo(0,0); } catch(e) {}
+                try { window.parent.document.documentElement.scrollTop = 0; } catch(e) {}
+                try { window.parent.document.body.scrollTop = 0; } catch(e) {}
+              })();
+            </script>
+            """,
+            height=0,
+            width=0,
+        )
+        st.session_state._scroll_to_top = False
+
 
 # =============================
 # Yardımcılar
@@ -119,6 +154,10 @@ def init_state():
         st.session_state.last_commentary = ""
 
 init_state()
+_init_scroll_state()
+
+# Scroll çalıştır (sayfanın en üstünde)
+_run_scroll_if_needed()
 
 # =============================
 # Piyasa/Risk Profili (terminoloji sadeleştirildi)
@@ -160,13 +199,15 @@ SCENARIOS = {
 }
 
 # =============================
-# Navigation
+# Navigation (sadece scroll eklendi)
 # =============================
 def go_next():
     st.session_state.step = 1 if st.session_state.step == 0 else min(5, st.session_state.step + 1)
+    _trigger_scroll_to_top()
 
 def go_prev():
     st.session_state.step = 0 if st.session_state.step == 1 else max(0, st.session_state.step - 1)
+    _trigger_scroll_to_top()
 
 def hard_reset():
     st.session_state.step = 0
@@ -176,6 +217,7 @@ def hard_reset():
     st.session_state.last_commentary = ""
     st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
     st.session_state.quiz_submitted = {"intro": False, 1: False, 2: False, 3: False, 4: False}
+    _trigger_scroll_to_top()
 
 # =============================
 # Üst hesaplar
@@ -262,7 +304,7 @@ if st.session_state.step in [1, 2, 3, 4, 5]:
     st.progress(st.session_state.step / 5)
 
 # =============================
-# 1) Profil (metin sadeleştirildi)
+# 1) Profil
 # =============================
 if st.session_state.step == 1:
     st.markdown(
@@ -556,6 +598,7 @@ elif st.session_state.step == 5:
 
     if b2.button("📣 Bu primle piyasaya çık (1 dönem simüle et)", use_container_width=True):
         simulate_one_pricing_period()
+        _trigger_scroll_to_top()
         st.rerun()
 
 # =============================
