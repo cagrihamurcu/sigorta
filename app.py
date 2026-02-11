@@ -1,44 +1,9 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 from typing import Optional
 
 st.set_page_config(page_title="Sigorta Temel Mantık Simülasyonu (Eğitici + Koç)", layout="wide")
-
-# =============================
-# Scroll helper (SADECE yukarı kaydırma)
-# =============================
-def _init_scroll_state():
-    if "_scroll_to_top" not in st.session_state:
-        st.session_state._scroll_to_top = False
-
-def _trigger_scroll_to_top():
-    st.session_state._scroll_to_top = True
-
-def _run_scroll_if_needed():
-    # Sayfanın en üstünde çalışmalı
-    if st.session_state.get("_scroll_to_top", False):
-        components.html(
-            """
-            <script>
-              (function() {
-                try { window.scrollTo(0,0); } catch(e) {}
-                try { document.documentElement.scrollTop = 0; } catch(e) {}
-                try { document.body.scrollTop = 0; } catch(e) {}
-
-                // Streamlit genelde iframe içinde çalıştığı için parent'ı da deneriz
-                try { window.parent.scrollTo(0,0); } catch(e) {}
-                try { window.parent.document.documentElement.scrollTop = 0; } catch(e) {}
-                try { window.parent.document.body.scrollTop = 0; } catch(e) {}
-              })();
-            </script>
-            """,
-            height=0,
-            width=0,
-        )
-        st.session_state._scroll_to_top = False
-
 
 # =============================
 # Yardımcılar
@@ -112,6 +77,24 @@ def compute_last_insights(df: pd.DataFrame, suggested_gross: float, premium_choi
 
     return diagnosis, actions, roadmap
 
+def ask_mcq(step_key: str, question: str, options: list[str], correct: str, radio_key: str):
+    """
+    Çoktan seçmeli soru:
+    - Şıkları her adım için bir kez karıştırır (kullanıcı cevap verirken yer değiştirmez).
+    - correct: doğru şık metni (options içinde birebir olmalı).
+    """
+    order_key = f"_mcq_order_{step_key}"
+    if order_key not in st.session_state:
+        rng = np.random.default_rng()
+        shuffled = options.copy()
+        rng.shuffle(shuffled)
+        st.session_state[order_key] = shuffled
+
+    ordered_options = st.session_state[order_key]
+    ans = st.radio(question, ordered_options, index=0, key=radio_key)
+    ok = (ans == correct)
+    return ans, ok
+
 # =============================
 # State
 # =============================
@@ -154,10 +137,6 @@ def init_state():
         st.session_state.last_commentary = ""
 
 init_state()
-_init_scroll_state()
-
-# Scroll çalıştır (sayfanın en üstünde)
-_run_scroll_if_needed()
 
 # =============================
 # Piyasa/Risk Profili (terminoloji sadeleştirildi)
@@ -199,15 +178,13 @@ SCENARIOS = {
 }
 
 # =============================
-# Navigation (sadece scroll eklendi)
+# Navigation
 # =============================
 def go_next():
     st.session_state.step = 1 if st.session_state.step == 0 else min(5, st.session_state.step + 1)
-    _trigger_scroll_to_top()
 
 def go_prev():
     st.session_state.step = 0 if st.session_state.step == 1 else max(0, st.session_state.step - 1)
-    _trigger_scroll_to_top()
 
 def hard_reset():
     st.session_state.step = 0
@@ -217,7 +194,11 @@ def hard_reset():
     st.session_state.last_commentary = ""
     st.session_state.quiz_ok = {"intro": False, 1: False, 2: False, 3: False, 4: False}
     st.session_state.quiz_submitted = {"intro": False, 1: False, 2: False, 3: False, 4: False}
-    _trigger_scroll_to_top()
+
+    # soru şık sıralarını da sıfırla (opsiyonel ama temiz)
+    for k in list(st.session_state.keys()):
+        if str(k).startswith("_mcq_order_"):
+            del st.session_state[k]
 
 # =============================
 # Üst hesaplar
@@ -267,16 +248,14 @@ Bir poliçenin, bir fiyatlama döneminde ortalama ne kadar hasar maliyeti üretm
 
     st.divider()
     st.write("Mini Soru:")
-    ans = st.radio(
-        "Beklenen hasar/poliçe hangi iki şeyin çarpımıdır?",
-        ["ortalama hasar × gider", "hasar olasılığı (p) × ortalama hasar", "prim × poliçe sayısı"],
-        index=0,
-        key="q_intro"
-    )
+
+    options = ["ortalama hasar × gider", "hasar olasılığı (p) × ortalama hasar", "prim × poliçe sayısı"]
+    correct = "hasar olasılığı (p) × ortalama hasar"
+    ans, ok = ask_mcq("intro", "Beklenen hasar/poliçe hangi iki şeyin çarpımıdır?", options, correct, "q_intro")
 
     if st.button("Cevabı Gönder", use_container_width=True):
         st.session_state.quiz_submitted["intro"] = True
-        st.session_state.quiz_ok["intro"] = (ans == "hasar olasılığı (p) × ortalama hasar")
+        st.session_state.quiz_ok["intro"] = ok
         st.rerun()
 
     if st.session_state.quiz_submitted["intro"]:
@@ -343,16 +322,14 @@ Seçim iki şeyi belirler:
 
     st.divider()
     st.write("Mini Soru:")
-    ans = st.radio(
-        "Hasar olasılığı (p) artarsa, beklenen hasar/poliçe için en doğru ifade hangisidir?",
-        ["Azalır", "Artar", "Değişmez"],
-        index=0,
-        key="q1"
-    )
+
+    options = ["Azalır", "Artar", "Değişmez"]
+    correct = "Artar"
+    ans, ok = ask_mcq("1", "Hasar olasılığı (p) artarsa, beklenen hasar/poliçe için en doğru ifade hangisidir?", options, correct, "q1")
 
     if st.button("Cevabı Gönder", use_container_width=True):
         st.session_state.quiz_submitted[1] = True
-        st.session_state.quiz_ok[1] = (ans == "Artar")
+        st.session_state.quiz_ok[1] = ok
         st.rerun()
 
     if st.session_state.quiz_submitted[1]:
@@ -397,16 +374,14 @@ elif st.session_state.step == 2:
 
     st.divider()
     st.write("Mini Soru:")
-    ans = st.radio(
-        "Gider oranı artarsa önerilen brüt prim ne olur?",
-        ["Azalır", "Artar", "Değişmez"],
-        index=0,
-        key="q2"
-    )
+
+    options = ["Azalır", "Artar", "Değişmez"]
+    correct = "Artar"
+    ans, ok = ask_mcq("2", "Gider oranı artarsa önerilen brüt prim ne olur?", options, correct, "q2")
 
     if st.button("Cevabı Gönder", use_container_width=True):
         st.session_state.quiz_submitted[2] = True
-        st.session_state.quiz_ok[2] = (ans == "Artar")
+        st.session_state.quiz_ok[2] = ok
         st.rerun()
 
     if st.session_state.quiz_submitted[2]:
@@ -451,16 +426,14 @@ elif st.session_state.step == 3:
 
     st.divider()
     st.write("Mini Soru:")
-    ans = st.radio(
-        "Prim çok düşerse en olası etki hangisidir?",
-        ["Satış artar ama zarar riski artar", "Satış azalır ve zarar riski azalır", "Hiçbir şey değişmez"],
-        index=0,
-        key="q3"
-    )
+
+    options = ["Satış artar ama zarar riski artar", "Satış azalır ve zarar riski azalır", "Hiçbir şey değişmez"]
+    correct = "Satış artar ama zarar riski artar"
+    ans, ok = ask_mcq("3", "Prim çok düşerse en olası etki hangisidir?", options, correct, "q3")
 
     if st.button("Cevabı Gönder", use_container_width=True):
         st.session_state.quiz_submitted[3] = True
-        st.session_state.quiz_ok[3] = (ans == "Satış artar ama zarar riski artar")
+        st.session_state.quiz_ok[3] = ok
         st.rerun()
 
     if st.session_state.quiz_submitted[3]:
@@ -502,16 +475,14 @@ Prim “rekabetçi/makul” seviyedeyken, bu fiyatlama döneminde satılmasını
 
     st.divider()
     st.write("Mini Soru:")
-    ans = st.radio(
-        "Fiyata duyarlılık yükselirse prim artınca satış nasıl değişir?",
-        ["Daha hızlı düşer", "Artar", "Değişmez"],
-        index=0,
-        key="q4"
-    )
+
+    options = ["Daha hızlı düşer", "Artar", "Değişmez"]
+    correct = "Daha hızlı düşer"
+    ans, ok = ask_mcq("4", "Fiyata duyarlılık yükselirse prim artınca satış nasıl değişir?", options, correct, "q4")
 
     if st.button("Cevabı Gönder", use_container_width=True):
         st.session_state.quiz_submitted[4] = True
-        st.session_state.quiz_ok[4] = (ans == "Daha hızlı düşer")
+        st.session_state.quiz_ok[4] = ok
         st.rerun()
 
     if st.session_state.quiz_submitted[4]:
@@ -598,7 +569,6 @@ elif st.session_state.step == 5:
 
     if b2.button("📣 Bu primle piyasaya çık (1 dönem simüle et)", use_container_width=True):
         simulate_one_pricing_period()
-        _trigger_scroll_to_top()
         st.rerun()
 
 # =============================
